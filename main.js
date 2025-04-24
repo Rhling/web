@@ -60,22 +60,34 @@ document.addEventListener('DOMContentLoaded', function() {
         previousWavePoints = Array(Math.ceil(canvas.width * (1 + extensionFactor * 2))).fill(verticalCenter);
     }
 
-    // 使用平滑曲線繪製波浪
+    // 美化曲線：
+    // 1. 使用漸層色彩
+    // 2. 增加陰影
+    // 3. 線條更柔順
     function drawSmoothWave(points) {
         if (points.length < 2) return;
-        
         const startX = -canvas.width * extensionFactor;
-        
+
+        // 建立漸層色彩
+        const gradient = ctx.createLinearGradient(0, 0, canvas.width, 0);
+        gradient.addColorStop(0, '#00c3ff'); // 左側藍
+        gradient.addColorStop(0.5, '#ffff1c'); // 中間黃
+        gradient.addColorStop(1, '#ff1c68'); // 右側粉紅
+
+        ctx.save();
         ctx.beginPath();
         ctx.moveTo(startX, points[0]);
-        
-        // 使用平滑的曲線連接點
         for (let i = 1; i < points.length; i++) {
             const x = startX + i;
             ctx.lineTo(x, points[i]);
         }
-        
+        ctx.strokeStyle = gradient;
+        ctx.lineWidth = 2.5;
+        ctx.shadowColor = 'rgba(0,0,0,0.18)';
+        ctx.shadowBlur = 8;
+        ctx.globalAlpha = 0.95;
         ctx.stroke();
+        ctx.restore();
     }
     
     // 自然平滑波形函數 - 加入水平偏移
@@ -110,12 +122,19 @@ document.addEventListener('DOMContentLoaded', function() {
         const totalWidth = Math.ceil(canvas.width * (1 + extensionFactor * 2));
         const currentWavePoints = [];
         
+        // 若有 serialAmplitude，覆蓋 baseAmplitude
+        let amplitude = baseAmplitude;
+        if (serialAmplitude !== null) amplitude = serialAmplitude;
+
         for (let i = 0; i < totalWidth; i++) {
             // 計算實際x坐標（相對於延伸後的起點）
             const x = i;
             
-            // 生成波形值，加入水平偏移
-            const waveValue = generateWavePoint(x, time, horizontalOffset);
+            // 生成波形值，加入水平偏移，並用 amplitude
+            let waveValue = Math.sin((x + horizontalOffset) * waveParams.frequency + time * waveParams.speed + waveParams.phase) * amplitude;
+            for (const wave of subWaves) {
+                waveValue += Math.sin((x + horizontalOffset) * wave.frequency + time * wave.speed + wave.phase) * wave.amplitude;
+            }
             
             // 計算當前點的 y 坐標
             let y = verticalCenter + waveValue + verticalShift;
@@ -146,6 +165,46 @@ document.addEventListener('DOMContentLoaded', function() {
     });
     
     resizeCanvas();
+    // 新增按鈕
+    createSerialButton();
     // 開始動畫循環
     requestAnimationFrame(drawWave);
 });
+
+// 新增 Web Serial 連接功能
+let serialAmplitude = null;
+
+function createSerialButton() {
+    const btn = document.createElement('button');
+    btn.textContent = '連接 Arduino 可變電阻';
+    btn.style.position = 'fixed';
+    btn.style.top = '20px';
+    btn.style.left = '20px';
+    btn.style.zIndex = 10;
+    btn.onclick = async () => {
+        if (!('serial' in navigator)) {
+            alert('此瀏覽器不支援 Web Serial API，請用 Chrome!');
+            return;
+        }
+        try {
+            const port = await navigator.serial.requestPort();
+            await port.open({ baudRate: 9600 });
+            const reader = port.readable.getReader();
+            while (true) {
+                const { value, done } = await reader.read();
+                if (done) break;
+                if (value) {
+                    const str = new TextDecoder().decode(value);
+                    const match = str.match(/\d+/);
+                    if (match) {
+                        // 0~1023 映射到 50~200
+                        serialAmplitude = 50 + (parseInt(match[0]) / 1023) * 150;
+                    }
+                }
+            }
+        } catch (e) {
+            alert('連接失敗: ' + e);
+        }
+    };
+    document.body.appendChild(btn);
+}
